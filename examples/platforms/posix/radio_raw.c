@@ -396,7 +396,7 @@ void platformRadioInit(void)
 												}
 	/* Using a monitor interface here results in a bad FCS and two missing
 	*  bytes from payload, using the normal IEEE 802.15.4 interface here */
-	strncpy(ifr.ifr_name, "monitor0", IFNAMSIZ);
+	strncpy(ifr.ifr_name, "wpan0", IFNAMSIZ);
 	ret = ioctl(sSockFd, SIOCGIFINDEX, &ifr);
 	if (ret < 0) {
 		perror("ioctl");
@@ -566,11 +566,11 @@ void radioReceive(otInstance *aInstance)
     bool    isAck;
     ssize_t rval = recv(sSockFd, (char *)&sReceiveMessage.mPsdu, sizeof(sReceiveMessage.mPsdu),0);
 
-    sReceiveFrame.mLength = rval;//+2;
+    sReceiveFrame.mLength = rval+2;
 
     if (!sPromiscuous)
     {
-	    //radioComputeCrc(&sReceiveMessage, sReceiveFrame.mLength+2);
+	    radioComputeCrc(&sReceiveMessage, sReceiveFrame.mLength+2);
     }
 
     /* Debug */
@@ -747,11 +747,11 @@ void radioTransmit(struct RadioMessage *aMessage, const struct otRadioFrame *aFr
     /* Debug */
     
     //printf("Sent PSDU: %s\n\r", (const char*)aMessage->mPsdu);
-    //int i;
-    //printf("\n\rSent: ");
-    //for (i = 0; i < aFrame->mLength - IEEE802154_FCS_LENGTH; i++) {
-    //    printf(" %02x ",(unsigned int) aMessage->mPsdu[i]);
-    //}
+    int i;
+    printf("\n\rSent: ");
+    for (i = 0; i < aFrame->mLength - IEEE802154_FCS_LENGTH; i++) {
+        printf(" %02x ",(unsigned int) aMessage->mPsdu[i]);
+    }
     
     if (rval < 0)
     {

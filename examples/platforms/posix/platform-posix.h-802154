@@ -80,23 +80,30 @@ __forceinline void timersub(struct timeval *a, struct timeval *b, struct timeval
 /* Added to support direct communications via wpan-tools */
 
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
 
-#include <net/if.h>
-#include <linux/if_packet.h>
 
-#include <arpa/inet.h>
-#include <sys/ioctl.h>
-
-#define IEEE802154_ADDR_LEN 8
 #define MAX_PACKET_LEN 127
 
-#ifndef ETH_P_IEEE802154
-#define ETH_P_IEEE802154 0x00F6
-#endif
+#define IEEE802154_ADDR_LEN 8
+
+enum {
+	IEEE802154_ADDR_NONE = 0x0,
+	IEEE802154_ADDR_SHORT = 0x2,
+	IEEE802154_ADDR_LONG= 0x3,
+};
+
+struct ieee802154_addr_sa {
+	int addr_type;
+	uint16_t pan_id;
+	uint8_t hwaddr[IEEE802154_ADDR_LEN];
+	uint16_t short_addr; /* hwaddr or short_addr */
+}ieee802154_addr_sa;
+
+struct sockaddr_ieee802154 {
+	sa_family_t family;
+	struct ieee802154_addr_sa addr;
+
+}sockaddr_ieee802154;
 
 /* End added support */
 

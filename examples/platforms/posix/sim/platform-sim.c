@@ -77,7 +77,7 @@ void otSimSendEvent(const struct Event *aEvent)
     memset(&sockaddr, 0, sizeof(sockaddr));
     sockaddr.sin_family = AF_INET;
     inet_pton(AF_INET, "127.0.0.1", &sockaddr.sin_addr);
-    sockaddr.sin_port = htons(9000 + sPortOffset);
+    sockaddr.sin_port = htons(9002 + sPortOffset);
 
     rval = sendto(sSockFd, aEvent, offsetof(struct Event, mData) + aEvent->mDataLength, 0, (struct sockaddr *)&sockaddr,
                   sizeof(sockaddr));
@@ -191,7 +191,7 @@ static void socket_init(void)
         sPortOffset *= WELLKNOWN_NODE_ID;
     }
 
-    sockaddr.sin_port        = htons(9000 + sPortOffset + gNodeId);
+    sockaddr.sin_port        = htons(8000 + sPortOffset + gNodeId);
     sockaddr.sin_addr.s_addr = INADDR_ANY;
 
     sSockFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

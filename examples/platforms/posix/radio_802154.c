@@ -384,41 +384,35 @@ void otPlatRadioSetPromiscuous(otInstance *aInstance, bool aEnable)
 
 void platformRadioInit(void)
 {
-    	int ret;
-	struct sockaddr_ll sll;
-	struct ifreq ifr;
+    int ret;
 
-	/* Create AF_PACKET address family socket for the SOCK_RAW type */
-	sSockFd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IEEE802154));
-	if (sSockFd < 0) {
-		perror("socket");
-		exit(EXIT_FAILURE);
-												}
-	/* Using a monitor interface here results in a bad FCS and two missing
-	*  bytes from payload, using the normal IEEE 802.15.4 interface here */
-	strncpy(ifr.ifr_name, "monitor0", IFNAMSIZ);
-	ret = ioctl(sSockFd, SIOCGIFINDEX, &ifr);
-	if (ret < 0) {
-		perror("ioctl");
-		exit(EXIT_FAILURE);
+    struct sockaddr_ieee802154 src;
+    /* IEEE 802.15.4 extended address to receive frames on, adapt to your setup */
+    uint8_t long_addr[IEEE802154_ADDR_LEN] = {0xde, 0xad, 0x00, 0xbe, 0xef, 0x00, 0xca, 0xfe};
+    
+    
+    /* Create IEEE 802.15.4 address family socket for the SOCK_DGRAM type */
+    sSockFd = socket(PF_IEEE802154, SOCK_DGRAM, 0);
+    if (sSockFd < 0) {
+	    perror("socket");
+	    exit(EXIT_FAILURE);
+    }
 
-	}
+    /* Prepare source socket address struct */
+    memset(&src, 0, sizeof(src));
+    src.family = AF_IEEE802154;
+    /* Used PAN ID is 0x1234 here, adapt to your setup */
+    
+    src.addr.pan_id = 0x1234;
+    src.addr.addr_type = IEEE802154_ADDR_LONG;
+    memcpy(&src.addr.hwaddr, &long_addr, IEEE802154_ADDR_LEN);
 
-
-	/* Prepare destination socket address struct */
-	memset(&sll, 0, sizeof(sll));
-	sll.sll_family = AF_PACKET;
-	sll.sll_ifindex = ifr.ifr_ifindex;
-	sll.sll_protocol = htons(ETH_P_IEEE802154);
-
-
-	/* Bind socket on this side */
-	ret = bind(sSockFd, (struct sockaddr *)&sll, sizeof(sll));
-	if (ret < 0) {
-		perror("bind");
-		exit(EXIT_FAILURE);
-	}
-   
+    /* Bind socket on this side */
+    ret = bind(sSockFd, (struct sockaddr *)&src, sizeof(src));
+    if (ret) {
+	    perror("bind");
+	    exit(EXIT_FAILURE);
+    }
 
     /* Not sure what this does, have to check */
     sReceiveFrame.mPsdu  = sReceiveMessage.mPsdu;
@@ -560,28 +554,15 @@ bool otPlatRadioGetPromiscuous(otInstance *aInstance)
     return sPromiscuous;
 }
 
-static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength);
 void radioReceive(otInstance *aInstance)
 {
     bool    isAck;
-    ssize_t rval = recv(sSockFd, (char *)&sReceiveMessage.mPsdu, sizeof(sReceiveMessage.mPsdu),0);
-
-    sReceiveFrame.mLength = rval;//+2;
-
-    if (!sPromiscuous)
-    {
-	    //radioComputeCrc(&sReceiveMessage, sReceiveFrame.mLength+2);
-    }
+    struct sockaddr_ieee802154 dst;
+    socklen_t addrlen = sizeof(dst);
+    ssize_t rval = recvfrom(sSockFd, (char *)&sReceiveMessage, sizeof(sReceiveMessage),0, (struct sockaddr *)&dst, &addrlen);
 
     /* Debug */
-    //printf("Received Psdu: %s\n\r", (char *)&sReceiveMessage.mPsdu);
-    //int i;
-    //for(i=0;i<sReceiveFrame.mLength;i++)
-    //    printf("%02x", sReceiveMessage.mPsdu[i]);
-
-    //printf("\n\rrval: %d, mLength:%d \n\r", rval, sReceiveFrame.mLength);
-    //printf("\n\risAck: %d \n\r",isFrameTypeAck(sReceiveFrame.mPsdu));
-    //printf("\n\rDsn: %d \n\r", getDsn(sReceiveFrame.mPsdu));
+    printf("Received %s\n\r", (char *)&sReceiveMessage);
 
     if (rval < 0)
     {
@@ -600,7 +581,7 @@ void radioReceive(otInstance *aInstance)
     sReceiveFrame.mIeInfo->mTimestamp = otPlatTimeGet();
 #endif
 
-    //sReceiveFrame.mLength = (uint8_t)(rval); /* -1 ?*/
+    sReceiveFrame.mLength = (uint8_t)(rval - 1);
 
     isAck = isFrameTypeAck(sReceiveFrame.mPsdu);
 
@@ -612,7 +593,8 @@ void radioReceive(otInstance *aInstance)
 
         otPlatRadioTxDone(aInstance, &sTransmitFrame, &sReceiveFrame, OT_ERROR_NONE);
     }
-    else if ((sState == OT_RADIO_STATE_RECEIVE || sState == OT_RADIO_STATE_TRANSMIT) && (!isAck || sPromiscuous))
+    else if ((sState == OT_RADIO_STATE_RECEIVE || sState == OT_RADIO_STATE_TRANSMIT) &&
+             (sReceiveFrame.mChannel == sReceiveMessage.mChannel) && (!isAck || sPromiscuous))
     {
         radioProcessFrame(aInstance);
     }
@@ -729,8 +711,8 @@ static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength)
 
 void radioTransmit(struct RadioMessage *aMessage, const struct otRadioFrame *aFrame)
 {
-    //uint32_t           i;
-    //struct sockaddr_ll sockaddr;
+    struct sockaddr_ieee802154 dst;
+    uint8_t long_addr[IEEE802154_ADDR_LEN] = {0xbe,0xef,0x00,0xde,0xad,0x00,0xca,0xff};
 
     /* This may not be necesary or needs not to be added, check radioComputeCrc */
     if (!sPromiscuous)
@@ -742,17 +724,21 @@ void radioTransmit(struct RadioMessage *aMessage, const struct otRadioFrame *aFr
     #ifndef IEEE802154_FCS_LENGTH
     #define IEEE802154_FCS_LENGTH 2
     #endif
-    int rval = send(sSockFd, (const char *)aMessage->mPsdu, aFrame->mLength - IEEE802154_FCS_LENGTH, 0);
+
+    /* Prepare destination socket address struct */
+    memset(&dst, 0, sizeof(dst));
+    dst.family = AF_IEEE802154;
+    /* Used PAN ID is 0x1234 here, adapt to your setup */
+    dst.addr.pan_id = 0x1234;
+
+    dst.addr.addr_type = IEEE802154_ADDR_LONG;
+    memcpy(&dst.addr.hwaddr, long_addr, IEEE802154_ADDR_LEN);
+
+    int rval = sendto(sSockFd, (const char *)aMessage, 1 + aFrame->mLength - IEEE802154_FCS_LENGTH, 0, (struct sockaddr *)&dst, sizeof(dst));
 
     /* Debug */
-    
-    //printf("Sent PSDU: %s\n\r", (const char*)aMessage->mPsdu);
-    //int i;
-    //printf("\n\rSent: ");
-    //for (i = 0; i < aFrame->mLength - IEEE802154_FCS_LENGTH; i++) {
-    //    printf(" %02x ",(unsigned int) aMessage->mPsdu[i]);
-    //}
-    
+    printf("Sent %s\n\r", (const char *)aMessage);
+
     if (rval < 0)
     {
         perror("send");
@@ -790,7 +776,6 @@ void radioProcessFrame(otInstance *aInstance)
     switch (sReceiveFrame.mPsdu[1] & IEEE802154_DST_ADDR_MASK)
     {
     case IEEE802154_DST_ADDR_NONE:
-	//printf("\n\rDST_ADDR_NONE\n\r");
         break;
 
     case IEEE802154_DST_ADDR_SHORT:
@@ -799,7 +784,6 @@ void radioProcessFrame(otInstance *aInstance)
         otEXPECT_ACTION((dstpan == IEEE802154_BROADCAST || dstpan == sPanid) &&
                             (short_address == IEEE802154_BROADCAST || short_address == sShortAddress),
                         error = OT_ERROR_ABORT);
-	//printf("\n\rADDR_SHORT: %04x, %d\n\r", dstpan, short_address);
         break;
 
     case IEEE802154_DST_ADDR_EXT:
@@ -808,11 +792,9 @@ void radioProcessFrame(otInstance *aInstance)
         otEXPECT_ACTION((dstpan == IEEE802154_BROADCAST || dstpan == sPanid) &&
                             memcmp(&ext_address, sExtendedAddress, sizeof(ext_address)) == 0,
                         error = OT_ERROR_ABORT);
-	//printf("\n\rADDR_EXTENDED: %04x\n\r",dstpan);
         break;
 
     default:
-	printf("\n\rERROR\n\r");
         error = OT_ERROR_ABORT;
         goto exit;
     }
