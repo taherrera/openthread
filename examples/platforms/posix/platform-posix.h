@@ -98,6 +98,10 @@ __forceinline void timersub(struct timeval *a, struct timeval *b, struct timeval
 #define ETH_P_IEEE802154 0x00F6
 #endif
 
+#ifndef IEEE802154_HW_ADDR 
+#define IEEE802154_HW_ADDR {0xde, 0xad, 0x00, 0xbe, 0xef, 0x00, 0xca, 0xfe}
+#endif
+
 /* End added support */
 
 #define POLL poll

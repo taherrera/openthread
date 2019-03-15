@@ -388,7 +388,7 @@ void platformRadioInit(void)
 
     struct sockaddr_ieee802154 src;
     /* IEEE 802.15.4 extended address to receive frames on, adapt to your setup */
-    uint8_t long_addr[IEEE802154_ADDR_LEN] = {0xde, 0xad, 0x00, 0xbe, 0xef, 0x00, 0xca, 0xfe};
+    uint8_t long_addr[IEEE802154_ADDR_LEN] = IEEE802154_HW_ADDR;
     
     
     /* Create IEEE 802.15.4 address family socket for the SOCK_DGRAM type */
@@ -712,7 +712,7 @@ static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength)
 void radioTransmit(struct RadioMessage *aMessage, const struct otRadioFrame *aFrame)
 {
     struct sockaddr_ieee802154 dst;
-    uint8_t long_addr[IEEE802154_ADDR_LEN] = {0xbe,0xef,0x00,0xde,0xad,0x00,0xca,0xff};
+    uint8_t long_addr[IEEE802154_ADDR_LEN] = IEEE802154_HW_ADDR;
 
     /* This may not be necesary or needs not to be added, check radioComputeCrc */
     if (!sPromiscuous)
