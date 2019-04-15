@@ -99,7 +99,11 @@ struct RadioMessage
     uint8_t mPsdu[OT_RADIO_FRAME_MAX_SIZE];
 } OT_TOOL_PACKED_END;
 
-static void radioTransmit(struct RadioMessage *msg, const struct otRadioFrame *pkt);
+
+static void wpan_tools_set_all(void);
+
+//static void radioTransmit(struct RadioMessage *msg, const struct otRadioFrame *pkt);
+static void radioTransmit(otInstance *aInstance, struct RadioMessage *msg, const struct otRadioFrame *pkt);
 static void radioSendMessage(otInstance *aInstance);
 static void radioSendAck(void);
 static void radioProcessFrame(otInstance *aInstance);
@@ -117,14 +121,15 @@ static otRadioIeInfo sTransmitIeInfo;
 static otRadioIeInfo sReceivedIeInfo;
 #endif
 
-static uint8_t  sExtendedAddress[OT_EXT_ADDRESS_SIZE];
-static uint16_t sShortAddress;
-static uint16_t sPanid;
+static uint8_t  sExtendedAddress[OT_EXT_ADDRESS_SIZE] = {0xde,0xad,0x00,0xbe,0xef,0x00,0xca,0xfe};
+static uint16_t sShortAddress = 0xdead;
+static uint16_t sPanid = 0x1234;
 //static uint16_t sPortOffset = 0;
 static int      sSockFd;
 static bool     sPromiscuous = false;
 static bool     sAckWait     = false;
 static int8_t   sTxPower     = 0;
+static uint8_t 	sChannel     = 26;
 
 static uint8_t      sShortAddressMatchTableCount = 0;
 static uint8_t      sExtAddressMatchTableCount   = 0;
@@ -311,6 +316,7 @@ static inline void getExtAddress(const uint8_t *frame, otExtAddress *address)
     }
 }
 
+/*
 static uint16_t crc16_citt(uint16_t aFcs, uint8_t aByte)
 {
     // CRC-16/CCITT, CRC-16/CCITT-TRUE, CRC-CCITT
@@ -338,6 +344,7 @@ static uint16_t crc16_citt(uint16_t aFcs, uint8_t aByte)
         0x3de3, 0x2c6a, 0x1ef1, 0x0f78};
     return (aFcs >> 8) ^ sFcsTable[(aFcs ^ aByte) & 0xff];
 }
+*/
 
 void otPlatRadioGetIeeeEui64(otInstance *aInstance, uint8_t *aIeeeEui64)
 {
@@ -357,22 +364,39 @@ void otPlatRadioSetPanId(otInstance *aInstance, uint16_t panid)
 {
     OT_UNUSED_VARIABLE(aInstance);
     sPanid = panid;
+    //wpan_tools_set_all();
+
 }
 
 void otPlatRadioSetExtendedAddress(otInstance *aInstance, const otExtAddress *aExtAddress)
 {
     OT_UNUSED_VARIABLE(aInstance);
 
+
     for (size_t i = 0; i < sizeof(sExtendedAddress); i++)
     {
         sExtendedAddress[i] = aExtAddress->m8[sizeof(sExtendedAddress) - 1 - i];
     }
+
+    platformRadioDeinit();
+    platformRadioInit();
 }
 
 void otPlatRadioSetShortAddress(otInstance *aInstance, uint16_t address)
 {
     OT_UNUSED_VARIABLE(aInstance);
     sShortAddress = address;
+
+    //wpan_tools_set_all();
+
+    /* rloc16 is the short addr of 802.15.4 radio, so it is dinamic, thats why it is here */
+
+    char cmd[100];
+    sprintf(cmd,"iwpan dev wpan0 set short_addr 0x%04x",sShortAddress);
+    system("ip link set wpan0 down");
+    system(cmd);
+    system("ip link set wpan0 up");
+
 }
 
 void otPlatRadioSetPromiscuous(otInstance *aInstance, bool aEnable)
@@ -384,6 +408,8 @@ void otPlatRadioSetPromiscuous(otInstance *aInstance, bool aEnable)
 
 void platformRadioInit(void)
 {
+	wpan_tools_set_all();
+
     	int ret;
 	struct sockaddr_ll sll;
 	struct ifreq ifr;
@@ -393,10 +419,10 @@ void platformRadioInit(void)
 	if (sSockFd < 0) {
 		perror("socket");
 		exit(EXIT_FAILURE);
-												}
+	}
 	/* Using a monitor interface here results in a bad FCS and two missing
 	*  bytes from payload, using the normal IEEE 802.15.4 interface here */
-	strncpy(ifr.ifr_name, "monitor0", IFNAMSIZ);
+	strncpy(ifr.ifr_name, "wpan0", IFNAMSIZ);
 	ret = ioctl(sSockFd, SIOCGIFINDEX, &ifr);
 	if (ret < 0) {
 		perror("ioctl");
@@ -418,7 +444,7 @@ void platformRadioInit(void)
 		perror("bind");
 		exit(EXIT_FAILURE);
 	}
-   
+
 
     /* Not sure what this does, have to check */
     sReceiveFrame.mPsdu  = sReceiveMessage.mPsdu;
@@ -493,6 +519,7 @@ otError otPlatRadioReceive(otInstance *aInstance, uint8_t aChannel)
         sState                 = OT_RADIO_STATE_RECEIVE;
         sAckWait               = false;
         sReceiveFrame.mChannel = aChannel;
+	sChannel = aChannel;
     }
 
     return error;
@@ -543,7 +570,9 @@ int8_t otPlatRadioGetRssi(otInstance *aInstance)
     }
 
 exit:
-    return rssi;
+    //return rssi;
+    (void)rssi;
+    return 30;
 }
 
 otRadioCaps otPlatRadioGetCaps(otInstance *aInstance)
@@ -560,48 +589,42 @@ bool otPlatRadioGetPromiscuous(otInstance *aInstance)
     return sPromiscuous;
 }
 
-static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength);
+//static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength);
 void radioReceive(otInstance *aInstance)
 {
-    bool    isAck;
+    //bool    isAck;
     ssize_t rval = recv(sSockFd, (char *)&sReceiveMessage.mPsdu, sizeof(sReceiveMessage.mPsdu),0);
 
-    sReceiveFrame.mLength = rval;//+2;
+    /* wpan0 does not give out FCS, so we add 2 bytes as if we had */
+    /* if using monitor0 dont add + 2, since monitor gives FCS */
+    sReceiveFrame.mLength = rval + 2;
 
-    if (!sPromiscuous)
-    {
+    //radioSendAck();
+
+    //if (!sPromiscuous)
+    //{
 	    //radioComputeCrc(&sReceiveMessage, sReceiveFrame.mLength+2);
-    }
+    //}
 
     /* Debug */
-    //printf("Received Psdu: %s\n\r", (char *)&sReceiveMessage.mPsdu);
+    //printf("rx: %x\r\n", (char *)&sReceiveMessage.mPsdu);
+    /* in wpan0 mode we recv without fcs, in monitor we receive with fcs */
+    //printf("rx: ");
     //int i;
     //for(i=0;i<sReceiveFrame.mLength;i++)
     //    printf("%02x", sReceiveMessage.mPsdu[i]);
+    //printf("\r\n");
+    //fflush(stdout);
+
 
     //printf("\n\rrval: %d, mLength:%d \n\r", rval, sReceiveFrame.mLength);
     //printf("\n\risAck: %d \n\r",isFrameTypeAck(sReceiveFrame.mPsdu));
     //printf("\n\rDsn: %d \n\r", getDsn(sReceiveFrame.mPsdu));
 
-    if (rval < 0)
-    {
-        perror("recvfrom");
-        exit(EXIT_FAILURE);
-    }
-
-    if (otPlatRadioGetPromiscuous(aInstance))
-    {
-        // Timestamp
-        sReceiveFrame.mInfo.mRxInfo.mMsec = otPlatAlarmMilliGetNow();
-        sReceiveFrame.mInfo.mRxInfo.mUsec = 0; // Don't support microsecond timer for now.
-    }
-
-#if OPENTHREAD_CONFIG_ENABLE_TIME_SYNC
-    sReceiveFrame.mIeInfo->mTimestamp = otPlatTimeGet();
-#endif
 
     //sReceiveFrame.mLength = (uint8_t)(rval); /* -1 ?*/
 
+    /*
     isAck = isFrameTypeAck(sReceiveFrame.mPsdu);
 
     if (sAckWait && sTransmitFrame.mChannel == sReceiveMessage.mChannel && isAck &&
@@ -612,10 +635,32 @@ void radioReceive(otInstance *aInstance)
 
         otPlatRadioTxDone(aInstance, &sTransmitFrame, &sReceiveFrame, OT_ERROR_NONE);
     }
+
     else if ((sState == OT_RADIO_STATE_RECEIVE || sState == OT_RADIO_STATE_TRANSMIT) && (!isAck || sPromiscuous))
     {
         radioProcessFrame(aInstance);
     }
+    */
+    radioProcessFrame(aInstance);
+
+    //if (rval < 0) /* error reading iface */
+    //{
+        //perror("recvfrom\n");
+        //exit(EXIT_FAILURE);
+    //}
+
+    if (otPlatRadioGetPromiscuous(aInstance))
+    {
+        // Timestamp
+        sReceiveFrame.mInfo.mRxInfo.mMsec = otPlatAlarmMilliGetNow();
+        sReceiveFrame.mInfo.mRxInfo.mUsec = 0; // Don't support microsecond timer fo$
+    }
+
+    #if OPENTHREAD_CONFIG_ENABLE_TIME_SYNC
+    sReceiveFrame.mIeInfo->mTimestamp = otPlatTimeGet();
+    #endif
+
+
 }
 
 void radioSendMessage(otInstance *aInstance)
@@ -651,7 +696,8 @@ void radioSendMessage(otInstance *aInstance)
     sTransmitMessage.mChannel = sTransmitFrame.mChannel;
 
     otPlatRadioTxStarted(aInstance, &sTransmitFrame);
-    radioTransmit(&sTransmitMessage, &sTransmitFrame);
+    //radioTransmit(&sTransmitMessage, &sTransmitFrame);
+    radioTransmit(aInstance, &sTransmitMessage, &sTransmitFrame);
 
     sAckWait = isAckRequested(sTransmitFrame.mPsdu);
 
@@ -711,7 +757,7 @@ void platformRadioProcess(otInstance *aInstance)
         radioSendMessage(aInstance);
     }
 }
-
+/*
 static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength)
 {
     uint16_t i;
@@ -726,33 +772,58 @@ static void radioComputeCrc(struct RadioMessage *aMessage, uint16_t aLength)
     aMessage->mPsdu[crc_offset]     = crc & 0xff;
     aMessage->mPsdu[crc_offset + 1] = crc >> 8;
 }
+*/
 
-void radioTransmit(struct RadioMessage *aMessage, const struct otRadioFrame *aFrame)
+void radioTransmit(otInstance *aInstance ,struct RadioMessage *aMessage, const struct otRadioFrame *aFrame)
 {
     //uint32_t           i;
     //struct sockaddr_ll sockaddr;
 
-    /* This may not be necesary or needs not to be added, check radioComputeCrc */
-    if (!sPromiscuous)
-    {
-        radioComputeCrc(aMessage, aFrame->mLength);
-    }
+    /* This is not necesary for this radio, HW adds FCS*/
+    //if (!sPromiscuous)
+    //{
+    //    radioComputeCrc(aMessage, aFrame->mLength);
+    //}
 
     /* If added CRC is a problem, -2 to length ;) */
     #ifndef IEEE802154_FCS_LENGTH
     #define IEEE802154_FCS_LENGTH 2
     #endif
-    int rval = send(sSockFd, (const char *)aMessage->mPsdu, aFrame->mLength - IEEE802154_FCS_LENGTH, 0);
+    //usleep(32*aFrame->mLength);
+    //printf("tx: %s\r\n", (char *) aMessage->mPsdu);
+    int rval = 0;
+    if (!isFrameTypeAck(aMessage->mPsdu))
+    	rval = send(sSockFd, (const char *)aMessage->mPsdu, aFrame->mLength - IEEE802154_FCS_LENGTH, 0);
 
-    /* Debug */
-    
-    //printf("Sent PSDU: %s\n\r", (const char*)aMessage->mPsdu);
+    //usleep(32*aFrame->mLength);
+    /* make thread belive we have received an acknoledgement */
+    if (isAckRequested(aMessage->mPsdu) && (rval == aFrame->mLength - IEEE802154_FCS_LENGTH))
+    {
+    sState   = OT_RADIO_STATE_RECEIVE;
+    sAckWait = false;
+
+    sReceiveFrame.mLength    = IEEE802154_ACK_LENGTH;
+    sReceiveFrame.mPsdu[0] = IEEE802154_FRAME_TYPE_ACK;
+
+    if (isDataRequestAndHasFramePending(sTransmitFrame.mPsdu))
+    {
+        sReceiveMessage.mPsdu[0] |= IEEE802154_FRAME_PENDING;
+    }
+
+    sReceiveMessage.mPsdu[1] = 0;
+    sReceiveMessage.mPsdu[2] = getDsn(sTransmitFrame.mPsdu);
+
+    otPlatRadioTxDone(aInstance, &sTransmitFrame, &sReceiveFrame, OT_ERROR_NONE);
+    }
+    /* end newversion */
+
+    //printf("tx: ");
     //int i;
-    //printf("\n\rSent: ");
     //for (i = 0; i < aFrame->mLength - IEEE802154_FCS_LENGTH; i++) {
-    //    printf(" %02x ",(unsigned int) aMessage->mPsdu[i]);
+    //    printf("%02x",(unsigned int) aMessage->mPsdu[i]);
     //}
-    
+    //printf("\r\n");
+
     if (rval < 0)
     {
         perror("send");
@@ -775,7 +846,8 @@ void radioSendAck(void)
 
     sAckMessage.mChannel = sReceiveFrame.mChannel;
 
-    radioTransmit(&sAckMessage, &sAckFrame);
+
+    //radioTransmit(&sAckMessage, &sAckFrame);
 }
 
 void radioProcessFrame(otInstance *aInstance)
@@ -962,7 +1034,7 @@ otError otPlatRadioGetTransmitPower(otInstance *aInstance, int8_t *aPower)
 
     *aPower = sTxPower;
 
-    return OT_ERROR_NONE;
+    return sTxPower;
 }
 
 otError otPlatRadioSetTransmitPower(otInstance *aInstance, int8_t aPower)
@@ -971,7 +1043,10 @@ otError otPlatRadioSetTransmitPower(otInstance *aInstance, int8_t aPower)
 
     sTxPower = aPower;
 
+    //wpan_tools_set_all();
+
     return OT_ERROR_NONE;
+
 }
 
 int8_t otPlatRadioGetReceiveSensitivity(otInstance *aInstance)
@@ -979,6 +1054,47 @@ int8_t otPlatRadioGetReceiveSensitivity(otInstance *aInstance)
     OT_UNUSED_VARIABLE(aInstance);
 
     return POSIX_RECEIVE_SENSITIVITY;
+}
+
+static void wpan_tools_set_all(void)
+{
+
+    char cmd[100];
+
+
+    system("iwpan dev wpan0 del");
+
+    sprintf(cmd, "iwpan phy phy0 set tx_power %d", sTxPower);
+    system(cmd);
+
+    sprintf(cmd, "iwpan phy phy0 set channel 0 %02d", sChannel);
+    system(cmd);
+
+    char extaddr[] = "de:ad:00:be:ef:00:ca:fe";
+    sprintf(extaddr, "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x", sExtendedAddress[0],\
+                                                                sExtendedAddress[1],\
+                                                                sExtendedAddress[2],\
+                                                                sExtendedAddress[3],\
+                                                                sExtendedAddress[4],\
+                                                                sExtendedAddress[5],\
+                                                                sExtendedAddress[6],\
+                                                                sExtendedAddress[7]);
+
+    sprintf(cmd, "iwpan phy phy0 interface add wpan0 type node %s", extaddr);
+    system(cmd);
+
+    sprintf(cmd,"iwpan dev wpan0 set short_addr 0x%04x",sShortAddress);
+    system(cmd);
+
+    sprintf(cmd,"iwpan dev wpan0 set pan_id 0x%04x",sPanid);
+    system(cmd);
+
+    system("iwpan dev wpan0 set max_csma_backoffs 5");
+    system("iwpan dev wpan0 set backoff_exponents 0 8");
+    system("iwpan dev wpan0 set max_frame_retries 7");
+
+    system("ip link set wpan0 up");
+
 }
 
 #endif // OPENTHREAD_POSIX_VIRTUAL_TIME == 0
