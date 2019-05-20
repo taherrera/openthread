@@ -26,6 +26,33 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Added to support direct communications via wpan-tools */
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+
+#include <net/if.h>
+#include <linux/if_packet.h>
+
+#include <arpa/inet.h>
+#include <sys/ioctl.h>
+
+#define IEEE802154_ADDR_LEN 8
+#define MAX_PACKET_LEN 127
+
+#ifndef ETH_P_IEEE802154
+#define ETH_P_IEEE802154 0x00F6
+#endif
+
+#ifndef IEEE802154_HW_ADDR 
+#define IEEE802154_HW_ADDR {0xde, 0xad, 0x00, 0xbe, 0xef, 0x00, 0xca, 0xfe}
+#endif
+
+/* End added support */
+
 #include "platform-posix.h"
 
 #if OPENTHREAD_POSIX_VIRTUAL_TIME == 0
@@ -1089,9 +1116,9 @@ static void wpan_tools_set_all(void)
     sprintf(cmd,"iwpan dev wpan0 set pan_id 0x%04x",sPanid);
     system(cmd);
 
-    system("iwpan dev wpan0 set max_csma_backoffs 5");
-    system("iwpan dev wpan0 set backoff_exponents 0 8");
-    system("iwpan dev wpan0 set max_frame_retries 7");
+    //system("iwpan dev wpan0 set max_csma_backoffs 5");
+    //system("iwpan dev wpan0 set backoff_exponents 0 8");
+    //system("iwpan dev wpan0 set max_frame_retries 7");
 
     system("ip link set wpan0 up");
 

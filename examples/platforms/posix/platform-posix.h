@@ -77,33 +77,6 @@ __forceinline void timersub(struct timeval *a, struct timeval *b, struct timeval
 #include <sys/time.h>
 #include <unistd.h>
 
-/* Added to support direct communications via wpan-tools */
-
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-
-#include <net/if.h>
-#include <linux/if_packet.h>
-
-#include <arpa/inet.h>
-#include <sys/ioctl.h>
-
-#define IEEE802154_ADDR_LEN 8
-#define MAX_PACKET_LEN 127
-
-#ifndef ETH_P_IEEE802154
-#define ETH_P_IEEE802154 0x00F6
-#endif
-
-#ifndef IEEE802154_HW_ADDR 
-#define IEEE802154_HW_ADDR {0xde, 0xad, 0x00, 0xbe, 0xef, 0x00, 0xca, 0xfe}
-#endif
-
-/* End added support */
-
 #define POLL poll
 #endif
 
